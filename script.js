@@ -1,10 +1,29 @@
-let raids = JSON.parse(localStorage.getItem("raids")) || [];
+// --- Firebase Setup ---
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
+import { 
+  getFirestore, collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy 
+} from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
+
+// Firebase config (from your HTML)
+const firebaseConfig = {
+  apiKey: "AIzaSyCks5cR37onDf2DUaNGZPQSTBkzgnS121g",
+  authDomain: "pokemon-raids-ca7c4.firebaseapp.com",
+  projectId: "pokemon-raids-ca7c4",
+  storageBucket: "pokemon-raids-ca7c4.firebasestorage.app",
+  messagingSenderId: "189905242015",
+  appId: "1:189905242015:web:81256f098061fa1914dfaa"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// --- Local State (favorites + likes still local per user) ---
+let raids = [];
 let currentTier = "all";
 let favorites = JSON.parse(localStorage.getItem("favorites")) || [];
-let chat = JSON.parse(localStorage.getItem("chat")) || [];
 let likedChatMessages = JSON.parse(localStorage.getItem("likedChatMessages")) || [];
 
-const tierMap = {
+{const tierMap = {
    // Tier 1 Pokémon
   "magikarp": "1",
   "shinx": "1",
@@ -56,6 +75,7 @@ const tierMap = {
   "axew": "1",
   "deino": "1",
   "noibat": "1",
+
 
   // Tier 3 Pokémon
   "machoke": "3",
@@ -113,6 +133,7 @@ const tierMap = {
   "boldore": "3",
   "gurdurr": "3",
 
+
   // Tier 4 Pokémon
   "snorlax": "4",
   "tyranitar": "4",
@@ -149,6 +170,7 @@ const tierMap = {
   "mega latias": "4",
   "mega latios": "4",
   "mega kangaskhan": "4",
+
 
   // Tier 5 Pokémon
   "articuno": "5",
@@ -207,6 +229,7 @@ const tierMap = {
   "regieleki": "5",
   "regidrago": "5",
 
+
   // Dynamax
   "darmanitan": "dynamax",
   "metagross": "dynamax",
@@ -261,6 +284,7 @@ const tierMap = {
   "caterpie": "dynamax",
   "metapod": "dynamax",
 
+
   // Gigantamax
   "gigantamax charizard": "gigantamax",
   "gigantamax blastoise": "gigantamax",
@@ -281,10 +305,12 @@ const tierMap = {
   "gigantamax duraludon": "gigantamax"
 }
 
-// Filters trigger display
 
-// --- Submit Raid ---
-function submitRaid() {
+// Filters trigger display
+};
+
+// --- Submit Raid (saves to Firestore) ---
+async function submitRaid() {
   const trainer = document.getElementById("trainer").value.trim();
   const boss = document.getElementById("boss").value.trim();
   const code = document.getElementById("code").value.trim();
@@ -309,14 +335,16 @@ function submitRaid() {
     team,
     tier,
     maxPlayers,
-    joined: [], // stores joined trainer names
-    timestamp: new Date().toISOString(),
+    joined: [],
+    timestamp: Date.now()
   };
 
-  raids.push(raid);
-  localStorage.setItem("raids", JSON.stringify(raids));
-  renderRaidList();
-  clearForm();
+  try {
+    await addDoc(collection(db, "raids"), raid);
+    clearForm();
+  } catch (e) {
+    console.error("Error saving raid:", e);
+  }
 }
 
 function clearForm() {
@@ -324,6 +352,95 @@ function clearForm() {
   document.getElementById("boss").value = "";
   document.getElementById("code").value = "";
   document.getElementById("team").value = "";
+}
+
+// --- Join Raid ---
+async function joinRaid(raidId) {
+  const trainerName = prompt("Enter your trainer name to join:");
+  if (!trainerName) return;
+
+  const raid = raids.find(r => r.id === raidId);
+  if (!raid) return alert("Raid not found!");
+
+  if (raid.joined.includes(trainerName)) {
+    return alert("You already joined this raid!");
+  }
+  if (raid.joined.length >= raid.maxPlayers) {
+    return alert("This raid is full!");
+  }
+
+  raid.joined.push(trainerName);
+  try {
+    await updateDoc(doc(db, "raids", raidId), { joined: raid.joined });
+  } catch (e) {
+    console.error("Error updating raid:", e);
+  }
+}
+
+// --- Firestore Listener for Raids ---
+onSnapshot(
+  query(collection(db, "raids"), orderBy("timestamp", "desc")),
+  (snapshot) => {
+    raids = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      // Filter out expired raids (older than 10 min)
+      if (Date.now() - data.timestamp < 10 * 60 * 1000) {
+        raids.push({ id: docSnap.id, ...data });
+      }
+    });
+    renderRaidList();
+  }
+);
+
+// --- Render Raids ---
+function renderRaidList() {
+  const container = document.getElementById("raid-list");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const bossFilter = document.getElementById("search-boss")?.value.toLowerCase() || "";
+  const teamFilter = document.getElementById("filter-team")?.value || "";
+
+  let filteredRaids = raids.filter((r) =>
+    (!bossFilter || r.boss.toLowerCase().includes(bossFilter)) &&
+    (!teamFilter || r.team === teamFilter) &&
+    (currentTier === "all" || r.tier === currentTier)
+  );
+
+  // Sort favorites on top
+  filteredRaids.sort((a, b) => {
+    const aFav = favorites.includes(a.id);
+    const bFav = favorites.includes(b.id);
+    return aFav === bFav ? 0 : aFav ? -1 : 1;
+  });
+
+  filteredRaids.forEach((r) => {
+    const countdownId = `countdown-${r.id}`;
+    const imageUrl = `https://img.pokemondb.net/artwork/${r.boss.toLowerCase().replace(/[^a-z0-9]/gi, "").replace(/ /g, "-")}.jpg`;
+
+    const card = document.createElement("div");
+    card.className = "raid-card";
+    if (favorites.includes(r.id)) card.classList.add("favorite");
+
+    card.dataset.timestamp = r.timestamp;
+    card.dataset.countdownId = countdownId;
+
+    card.innerHTML = `
+      <img src="${imageUrl}" alt="${r.boss}" class="boss-icon"><br>
+      <strong>${r.boss}</strong><br>
+      Trainer: ${r.trainer}<br>
+      Code: <span class="friend-code">${r.code}</span>
+      <button onclick="copyCode('${r.code}')">📋</button>
+      <button onclick="toggleFavorite('${r.id}')">${favorites.includes(r.id) ? "⭐" : "☆"}</button><br>
+      Team: ${r.team}<br>
+      Tier: ${r.tier}<br>
+      Expires in: <span id="${countdownId}">Loading...</span><br>
+      Players: ${r.joined.length}/${r.maxPlayers}<br>
+      <button onclick="joinRaid('${r.id}')">Join Raid</button>
+    `;
+    container.appendChild(card);
+  });
 }
 
 // --- Favorite Button ---
@@ -337,121 +454,19 @@ function toggleFavorite(raidId) {
   renderRaidList();
 }
 
-// --- Copy Friend Code ---
-function copyCode(code) {
-  navigator.clipboard.writeText(code).then(() => alert("Friend code copied!"));
-}
-
-// --- Filter by Tier ---
-function filterByTier(tier) {
-  currentTier = tier;
-  renderRaidList();
-}
-
-// --- Join Raid (FIXED) ---
-function joinRaid(raidId) {
-  const trainerName = prompt("Enter your trainer name to join:");
-  if (!trainerName) return;
-
-  // Extract code and index from raidId
-  const lastDash = raidId.lastIndexOf("-");
-  const codePart = raidId.slice(0, lastDash);
-  const index = parseInt(raidId.slice(lastDash + 1));
-
-  // Find the raid by matching code + index
-  const matchedRaids = raids.filter(r => r.code.replace(/[^a-z0-9]/gi, "") === codePart);
-  const raid = matchedRaids[index];
-
-  if (!raid) return alert("Raid not found!");
-
-  if (raid.joined.includes(trainerName)) {
-    return alert("You already joined this raid!");
-  }
-
-  if (raid.joined.length >= raid.maxPlayers) {
-    return alert("This raid is full!");
-  }
-
-  raid.joined.push(trainerName);
-  localStorage.setItem("raids", JSON.stringify(raids));
-  renderRaidList();
-}
-
-// --- Render Raid List with Favorite Sorting ---
-function renderRaidList() {
-  const container = document.getElementById("raid-list");
-  if (!container) return;
-
-  const now = new Date();
-  raids = raids.filter((r) => now - new Date(r.timestamp) < 10 * 60 * 1000);
-  localStorage.setItem("raids", JSON.stringify(raids));
-
-  const bossFilter = document.getElementById("search-boss")?.value.toLowerCase() || "";
-  const teamFilter = document.getElementById("filter-team")?.value || "";
-
-  let filteredRaids = raids.filter((r) =>
-    (!bossFilter || r.boss.toLowerCase().includes(bossFilter)) &&
-    (!teamFilter || r.team === teamFilter) &&
-    (currentTier === "all" || r.tier === currentTier)
-  );
-
-  // Sort favorites on top
-  filteredRaids.sort((a, b) => {
-    const aIndex = raids.indexOf(a);
-    const bIndex = raids.indexOf(b);
-    const aId = `${a.code.replace(/[^a-z0-9]/gi, "")}-${aIndex}`;
-    const bId = `${b.code.replace(/[^a-z0-9]/gi, "")}-${bIndex}`;
-    const aFav = favorites.includes(aId);
-    const bFav = favorites.includes(bId);
-    return aFav === bFav ? 0 : aFav ? -1 : 1;
-  });
-
-  container.innerHTML = "";
-
-  filteredRaids.forEach((r) => {
-    const index = raids.indexOf(r);
-    const raidId = `${r.code.replace(/[^a-z0-9]/gi, "")}-${index}`;
-    const countdownId = `countdown-${raidId}`;
-    const imageUrl = `https://img.pokemondb.net/artwork/${r.boss.toLowerCase().replace(/[^a-z0-9]/gi, "").replace(/ /g, "-")}.jpg`;
-
-    const card = document.createElement("div");
-    card.className = "raid-card";
-    if (favorites.includes(raidId)) card.classList.add("favorite");
-
-    card.dataset.timestamp = r.timestamp;
-    card.dataset.countdownId = countdownId;
-
-    card.innerHTML = `
-      <img src="${imageUrl}" alt="${r.boss}" class="boss-icon"><br>
-      <strong>${r.boss}</strong><br>
-      Trainer: ${r.trainer}<br>
-      Code: <span class="friend-code">${r.code}</span>
-      <button onclick="copyCode('${r.code}')">📋</button>
-      <button onclick="toggleFavorite('${raidId}')">${favorites.includes(raidId) ? "⭐" : "☆"}</button><br>
-      Team: ${r.team}<br>
-      Tier: ${r.tier}<br>
-      Expires in: <span id="${countdownId}">Loading...</span><br>
-      Players: ${r.joined.length}/${r.maxPlayers}<br>
-      <button onclick="joinRaid('${raidId}')">Join Raid</button>
-    `;
-
-    container.appendChild(card);
-  });
-}
-
-// --- Update Countdown Timer ---
+// --- Countdown Timer ---
 function updateCountdowns() {
-  const now = new Date();
+  const now = Date.now();
   const cards = document.querySelectorAll(".raid-card");
 
   cards.forEach((card) => {
     const timestamp = card.dataset.timestamp;
     const countdownId = card.dataset.countdownId;
-
     const countdownEl = document.getElementById(countdownId);
+
     if (!countdownEl || !timestamp) return;
 
-    const timeRemaining = 10 * 60 * 1000 - (now - new Date(timestamp));
+    const timeRemaining = 10 * 60 * 1000 - (now - timestamp);
     if (timeRemaining <= 0) {
       countdownEl.textContent = "Expired";
     } else {
@@ -461,121 +476,80 @@ function updateCountdowns() {
     }
   });
 }
+setInterval(updateCountdowns, 1000);
 
-// --- Post Chat Message ---
-function postChat() {
+// --- Copy Code ---
+function copyCode(code) {
+  navigator.clipboard.writeText(code).then(() => alert("Friend code copied!"));
+}
+
+// --- Chat Firestore ---
+async function postChat() {
   const name = document.getElementById("chat-name").value.trim();
   const message = document.getElementById("chat-message").value.trim();
   if (!name || !message) return alert("Please fill out name and message");
 
   const chatEntry = {
-    id: Date.now(),
     name,
     message,
-    timestamp: new Date().toISOString(),
-    likes: 0,
+    timestamp: Date.now(),
+    likes: 0
   };
 
-  chat.push(chatEntry);
-  localStorage.setItem("chat", JSON.stringify(chat));
-  displayChat();
-  document.getElementById("chat-message").value = "";
+  try {
+    await addDoc(collection(db, "chat"), chatEntry);
+    document.getElementById("chat-message").value = "";
+  } catch (e) {
+    console.error("Error posting chat:", e);
+  }
 }
 
-// --- Display Chat (with messages expiring after 24 hours) ---
-function displayChat() {
-  const now = new Date();
-  chat = chat.filter((msg) => now - new Date(msg.timestamp) < 24 * 60 * 60 * 1000);
-  localStorage.setItem("chat", JSON.stringify(chat));
+// --- Chat Listener ---
+onSnapshot(
+  query(collection(db, "chat"), orderBy("timestamp", "asc")),
+  (snapshot) => {
+    const container = document.getElementById("chat-messages");
+    container.innerHTML = "";
+    const now = Date.now();
 
-  const container = document.getElementById("chat-messages");
-  container.innerHTML = "";
+    snapshot.forEach((docSnap) => {
+      const msg = { id: docSnap.id, ...docSnap.data() };
+      // Filter out messages older than 24h
+      if (now - msg.timestamp > 24 * 60 * 60 * 1000) return;
 
-  chat.forEach((msg) => {
-    const div = document.createElement("div");
-    div.className = "chat-message";
+      const isLiked = likedChatMessages.includes(msg.id);
+      const likeButtonClass = isLiked ? "like-button liked" : "like-button";
 
-    const isLiked = likedChatMessages.includes(msg.id);
-    const likeButtonClass = isLiked ? "like-button liked" : "like-button";
+      const div = document.createElement("div");
+      div.className = "chat-message";
+      div.innerHTML = `
+        <strong>${msg.name}:</strong> ${msg.message}
+        <button class="${likeButtonClass}" onclick="toggleLikeMessage('${msg.id}', ${msg.likes || 0})">
+          ❤️ ${msg.likes || 0}
+        </button>
+      `;
+      container.appendChild(div);
+    });
+  }
+);
 
-    div.innerHTML = `
-      <strong>${msg.name}:</strong> ${msg.message}
-      <button class="${likeButtonClass}" onclick="toggleLikeMessage(${msg.id})">
-        ❤️ ${msg.likes}
-      </button>
-    `;
-    container.appendChild(div);
-  });
-}
-
-// --- Toggle Like on Chat Message ---
-function toggleLikeMessage(id) {
-  const msgIndex = chat.findIndex((msg) => msg.id === id);
-  if (msgIndex === -1) return;
-
+// --- Like Button ---
+async function toggleLikeMessage(id, currentLikes) {
   const likedIndex = likedChatMessages.indexOf(id);
+  let newLikes = currentLikes;
+
   if (likedIndex === -1) {
-    chat[msgIndex].likes = (chat[msgIndex].likes || 0) + 1;
+    newLikes = currentLikes + 1;
     likedChatMessages.push(id);
   } else {
-    chat[msgIndex].likes = Math.max((chat[msgIndex].likes || 1) - 1, 0);
+    newLikes = Math.max(currentLikes - 1, 0);
     likedChatMessages.splice(likedIndex, 1);
   }
 
-  localStorage.setItem("chat", JSON.stringify(chat));
   localStorage.setItem("likedChatMessages", JSON.stringify(likedChatMessages));
-  displayChat();
-}
-
-// --- Info Button ---
-function showInfo() {
-  alert(
-    "How to Use:\n" +
-    "- Click 'Join Raid' and enter your trainer name to join that raid.\n" +
-    "- Click '⭐' to favorite raids; favorited raids will move to the top.\n" +
-    "- Chat messages older than 24 hours are automatically removed.\n" +
-    "- Raids expire after 10 minutes and are removed.\n" +
-    "- Click '📋' to copy the friend code.\n" +
-    "- Type Shadow, Dynamax, or Gigantamax before the pokemon's name to distinguish those raids."
-  );
-}
-
-// --- Event Listeners for Filters ---
-if (document.getElementById("search-boss")) {
-  document.getElementById("search-boss").addEventListener("input", renderRaidList);
-}
-if (document.getElementById("filter-team")) {
-  document.getElementById("filter-team").addEventListener("change", renderRaidList);
-}
-
-const darkToggleBtn = document.getElementById('dark-toggle');
-
-function updateDarkModeIcon(isDark) {
-  if (darkToggleBtn) {
-    darkToggleBtn.textContent = isDark ? '☀️ Light Mode' : '🌙 Dark Mode';
+  try {
+    await updateDoc(doc(db, "chat", id), { likes: newLikes });
+  } catch (e) {
+    console.error("Error updating likes:", e);
   }
 }
-
-// Apply saved dark mode setting on load
-window.addEventListener('DOMContentLoaded', () => {
-  const darkModeSetting = localStorage.getItem('darkMode');
-  const isDark = darkModeSetting === 'enabled';
-  document.body.classList.toggle('dark-mode', isDark);
-  updateDarkModeIcon(isDark);
-});
-
-// Toggle dark mode and save preference
-if (darkToggleBtn) {
-  darkToggleBtn.addEventListener('click', () => {
-    const isDark = document.body.classList.toggle('dark-mode');
-    localStorage.setItem('darkMode', isDark ? 'enabled' : 'disabled');
-    updateDarkModeIcon(isDark);
-    renderRaidList();
-    displayChat();
-  });
-}
-
-// --- Initial Calls ---
-displayChat();
-renderRaidList();
-setInterval(updateCountdowns, 1000);
