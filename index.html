@@ -5,10 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Remote Raid Lobby</title>
   <link rel="stylesheet" href="style.css" />
-  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
-<link rel="manifest" href="/site.webmanifest">
 </head>
 <body>
 <div id="site-header">
@@ -18,9 +14,6 @@
   <button id="info-button" onclick="showInfo()">ℹ️ Info</button>
   <button id="dark-toggle">🌙 Toggle Dark Mode</button>
   <h2 class="subtitle">Pokémon GO Remote Raid Board</h2>
-
-
-
 
   <div class="raid-form">
     <input id="trainer" placeholder="Trainer Name" />
@@ -35,9 +28,6 @@
     <button onclick="submitRaid()">Post Raid</button>
   </div>
 
-
-
-
   <div class="filters">
     <input type="text" id="search-boss" placeholder="Search by Boss Name">
     <select id="filter-team">
@@ -47,9 +37,6 @@
       <option value="Instinct">Instinct</option>
     </select>
   </div>
-
-
-
 
   <div class="tier-tabs">
     <button onclick="filterByTier('all')">All</button>
@@ -66,21 +53,122 @@
   <hr />
   <h2>Active Raids</h2>
   <div id="raid-list"></div>
-<hr />
-<h2>Community Chat</h2>
-<div class="chat-form">
-  <input id="chat-name" placeholder="Your Name" />
-  <input id="chat-message" placeholder="Type a message..." />
-  <button onclick="postChat()">Send</button>
-</div>
-<div id="chat-messages"></div>
- <script src="pokemonData.js"></script>
-<script src="script.js"></script>
-  <script>
+  <hr />
+  <h2>Community Chat</h2>
+  <div class="chat-form">
+    <input id="chat-name" placeholder="Your Name" />
+    <input id="chat-message" placeholder="Type a message..." />
+    <button onclick="postChat()">Send</button>
+  </div>
+  <div id="chat-messages"></div>
+
+  <!-- Pokémon Data -->
+  <script src="pokemonData.js"></script>
+  <script src="script.js"></script>
+
+  <!-- Firebase + Firestore -->
+  <script type="module">
+    // Firebase core
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
+    import { 
+      getFirestore, collection, addDoc, onSnapshot, serverTimestamp, query, orderBy 
+    } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
+
+    // Your Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyCks5cR37onDf2DUaNGZPQSTBkzgnS121g",
+      authDomain: "pokemon-raids-ca7c4.firebaseapp.com",
+      projectId: "pokemon-raids-ca7c4",
+      storageBucket: "pokemon-raids-ca7c4.firebasestorage.app",
+      messagingSenderId: "189905242015",
+      appId: "1:189905242015:web:81256f098061fa1914dfaa"
+    };
+
+    // Initialize
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Submit raid → Firestore
+    window.submitRaid = async function () {
+      const trainer = document.getElementById("trainer").value.trim();
+      const boss = document.getElementById("boss").value.trim();
+      const code = document.getElementById("code").value.trim();
+      const team = document.getElementById("team").value;
+
+      if (!trainer || !boss || !code) return alert("Fill all fields!");
+
+      try {
+        await addDoc(collection(db, "raids"), {
+          trainer, boss, code, team,
+          timestamp: serverTimestamp()
+        });
+        document.getElementById("trainer").value = "";
+        document.getElementById("boss").value = "";
+        document.getElementById("code").value = "";
+        document.getElementById("team").value = "";
+      } catch (e) {
+        console.error("Error adding raid:", e);
+      }
+    };
+
+    // Real-time raid updates
+    const raidList = document.getElementById("raid-list");
+    onSnapshot(
+      query(collection(db, "raids"), orderBy("timestamp", "desc")),
+      (snapshot) => {
+        raidList.innerHTML = "";
+        snapshot.forEach((doc) => {
+          const raid = doc.data();
+          const div = document.createElement("div");
+          div.classList.add("raid-card");
+          div.innerHTML = `
+            <strong>${raid.boss}</strong><br/>
+            Trainer: ${raid.trainer}<br/>
+            Team: ${raid.team || "Unknown"}<br/>
+            Code: ${raid.code}
+          `;
+          raidList.appendChild(div);
+        });
+      }
+    );
+
+    // Post chat message
+    window.postChat = async function () {
+      const name = document.getElementById("chat-name").value.trim();
+      const message = document.getElementById("chat-message").value.trim();
+      if (!name || !message) return;
+
+      try {
+        await addDoc(collection(db, "chat"), {
+          name, message,
+          timestamp: serverTimestamp()
+        });
+        document.getElementById("chat-message").value = "";
+      } catch (e) {
+        console.error("Error posting chat:", e);
+      }
+    };
+
+    // Real-time chat updates
+    const chatBox = document.getElementById("chat-messages");
+    onSnapshot(
+      query(collection(db, "chat"), orderBy("timestamp", "desc")),
+      (snapshot) => {
+        chatBox.innerHTML = "";
+        snapshot.forEach((doc) => {
+          const chat = doc.data();
+          const div = document.createElement("div");
+          div.classList.add("chat-message");
+          div.innerHTML = `<strong>${chat.name}:</strong> ${chat.message}`;
+          chatBox.appendChild(div);
+        });
+      }
+    );
+
+    // Dark mode toggle
     document.getElementById('dark-toggle').addEventListener('click', () => {
       document.body.classList.toggle('dark-mode');
     });
   </script>
 </body>
 </html>
-
